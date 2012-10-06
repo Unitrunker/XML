@@ -1,0 +1,82 @@
+body
+{
+	background-color: White;
+	font-family: Tahoma;
+	color: Black;
+}
+
+p.note
+{
+	color: Red;
+	font-size: small;
+}
+
+p.author
+{
+	font-size: smaller;
+	color:Navy;
+}
+
+p.tip
+{
+	color:Yellow;
+	font-style:normal;
+	font-size:small
+}
+
+h3
+{
+	color: Blue;
+}
+
+table.head
+{
+	background-color: White;
+	color: Blue;
+	width: 100%;
+	text-align: center;
+	border: 0;
+}
+
+table
+{
+	background-color: White;
+	color: Green;
+	width: 100%;
+	text-align: center;
+	border: 0;
+}
+
+table.sidebar
+{
+	background-color: Black;
+	color: Red;
+	font-size: x-small;
+	border-color: Gray;
+	border-width: thin;
+	border-style:window-inset;
+}
+
+table.chart
+{
+	padding: 0 0 0 0;
+	border-width: 0;
+	background-color: Black;
+	border: 0 0 0;
+	color: White;
+	width: 100%;
+	text-align: center;
+	border: 0;
+}
+
+pre.code
+{
+	color: Navy;
+	background-color: White;
+}
+
+pre.xml
+{
+	color: Maroon;
+	background-color: White;
+}

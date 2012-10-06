@@ -1,0 +1,428 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html xml:lang="en-US" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<title>Parse XML at SAX Speed without DOM or SAX.</title>
+<meta content="application/xhtml+xml; charset=utf-8" http-equiv="Content-Type" />
+<meta name="description" content="XML" />
+<meta name="keywords" content="XML SAX DOM" />
+<link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+<link rel="stylesheet" type="text/css" href="uniform.css" media="screen" />
+</head>
+<body>
+<h3>Parse XML at SAX Speed without DOM or SAX.</h3>
+
+<h4>SAX performance with the readability of DOM like access.</h4>
+
+<p class="author">Rick Parrish, Consultant</p>
+
+<p>I have used several XML parsers over the last decade including <a href="http://xerces.apache.org/xerces-c/">Xerces</a> and 
+<a href="http://www.microsoft.com/download/en/details.aspx?id=3988">MS-XML</a>. The two principal APIs are SAX and DOM. 
+When you've worked with XML for a while, you'll discover that DOM code is very readable - particularly when written in a 
+top-down style. You start from the document root element and work your way down to the data needed. In contrast, a SAX 
+API presents a callback mechanism. A handful of different callbacks reflect the XML content as it is parsed from 
+beginning to end. Your application's callback functions must manage some state information to know in what context it is 
+getting a text, element or attribute node. The result is tolerable but not nearly as readable as top-down DOM access. The 
+advantage of SAX (and Expat) is performance. You process the XML as you parse it. The DOM approach essentially processes 
+the XML twice. Once to create a DOM and again when you access the DOM to extract the desired data. The latter step 
+requires the entire DOM object to be present in memory. In short, this is expensive in processing and memory.</p>
+
+<p>With .NET, Microsoft introduced another type of XML parser called the 
+<a href="http://msdn.microsoft.com/en-us/library/system.xml.xmlreader.aspx">XML Reader</a>. This parser provides DOM-like access 
+in a limited forward-only manner. This allows top-down access without the need to track state or consume large chunks of memory 
+(for large XML files). The parser presented here was inspired by the .NET XML Reader. Wanting this functionality for C/C++, I 
+looked around for a C/C++ implementation that offered the same semantics for processing XML data. Not finding one, I decided to
+create one.</p>
+
+<h3>Scope</h3>
+
+<p>For heavy duty work I will use Xerces or MS-XML. However, for one native Windows project I needed an XML parser that 
+did not require linking against a large library or creating a new COM dependency. Turns out explaining to users how to 
+install MS-XML is a bit of a pain. Also, I did not want to deploy an application where the XML library is larger than 
+the app. Zipped binaries of Xerces for x86 Windows are 18 megabytes. The app fit on a floppy disk. Remember floppy disks?</p>
+
+<p>My XML needs are modest. I don't need CDATA, namespaces, XPath, DTDs, or XML Schema. The API presented here allows 
+faking namespace support but it does not try to resolve out-of-document references. The parser is limited to the content 
+of the input stream. I only want to store and retrieve some XML data. If you need DTDs or validation, consider a much 
+larger library. This limited scope has worked very well over the last three years.</p>
+
+<h3>Recursive Descent Parsing</h3>
+
+<p><a href="http://en.wikipedia.org/wiki/Recursive_descent_parser">Recursive descent parsing</a> is an easy to 
+understand and easy to maintain mechanism for parsing text. The approach here concentrates on a handful of utility 
+functions that manage a read-ahead buffer. A cursor position tracks forward progress through the buffer. The functions 
+return true when something is matched (and optionally consumed). The peek functions perform matching. The parse 
+functions extend this to also consume buffer content. The functions return false when the buffer does not match. In 
+this case, the buffer is left untouched (eg. the cursor position does not change).</p>
+
+<pre class="code">bool peekMatch(const char *text, size_t len);
+bool peekMatch(const char text);
+bool parseMatch(const char *text, size_t len);
+bool parseMatch(const char text);</pre>
+
+<p>The above functions are the foundation for the whole parser. The result is significant functionality in only 618 
+lines (as of this writing) of code.</p>
+
+<h3>Performance and Memory</h3>
+
+<p>The read-ahead buffer tries to read data from the stream in fixed chunks. The parser is currently designed such that 
+no single parseable item can exceed the size of the read-ahead buffer. I don't embed binary blobs so this has not been 
+an issue for me. If you run into a situation where the internal buffer is too small, you can alter the source code to 
+make the buffer larger.</p>
+
+<p>The library presented here is built around STL strings which aren't the fastest string objects. For higher 
+performance, you may want to substitute a different string class. I haven't needed this myself - yet.</p>
+
+<h3>Input Stream</h3>
+
+<p>To decouple the parser from the various sources of XML data, an IInputStream interface was defined. Included here 
+are IInputStream implementations for disk file and memory. There's not much to the interface, see:</p>
+
+<pre class="code">virtual bool Read(unsigned char *pOctets, size_t iOctets, size_t &iRead);
+virtual void Close();</pre>
+
+<p>As you can imagine, creating file and memory implementations are trivial. Implementing <i>IInputStream</i> for a 
+socket, named pipe or gzip compressed stream is left as an exercise for the reader.</p>
+
+<h3>XML Reader</h3>
+
+<p>The reader / parser accepts an <i>IInputStream</i> through the <i>open</i> method. The underlying stream is 
+assumed to be ready.</p>
+
+<pre class="code">FileInputStream istream;
+XML::Reader reader;
+if ( istream.Open(path) && reader.open(&istream) )
+{
+	// do some parsing
+}
+reader.close();
+istream.Close();</pre>
+
+<p>From there, you can start parsing. Parsing elements follows this loose outline:</p>
+
+<ul>
+<li>Call <i>readStartElement</i> to parse the element (up to but not including any nested content or closing tag).</li>
+<li>Use <i>getAttribute</i> zero or more times to retrieve attributes (must be done at this stage).</li>
+<li>Parse nested content, if any.</li>
+<li>Call <i>readEndElement</i> to advance to next node in the stream.</li>
+</ul>
+
+<p>Suppose you expect a document level element named "Root". You can simultaneously consume the element and
+verify the element is indeed named "Root" with the following statement:</p>
+
+<pre class="code">if ( reader.readStartElement("Root") )
+{
+	// parse rest of document.
+	reader.readEndElement(false);
+}</pre>
+
+<p>The parser won't advance if the root element is not named "Root". You can test for any of several possible document 
+level elements. Notice the matching call to readEndElement. The paired calls are required for a matched set of opening / 
+closing tags and for self-closing tags.</p>
+
+<p>Here's a self-closing tag example to illustrate. I've included column numbers to make it easier to read.</p>
+
+<pre class="xml">         1         2
+12345678901234567890123
+&lt;element key="value" /&gt;</pre>
+
+<p><i>readStartElement</i> will consume all of the above text from column 1 up to and including column 20. Basically, 
+that's everything but the element's "/>" tail. Notice that the attributes are also consumed at this stage. The element's 
+attributes are temporarily retained up until the eventual call to <i>readEndElement</i>. The <i>readEndElement</i> call 
+will consume columns 21 through 23.</p>
+
+<p>Here's a matched opening / closing tag example to illustrate. I've included column numbers to make it easier to read.</p>
+
+<pre class="xml">         1         2         3
+12345678901234567890123456789012345
+&lt;element key="value"&gt;text&lt;/element&gt;</pre>
+
+<p><i>readStartElement</i> will consume all of the above text from column 1 up to and including column 21. Basically, 
+that's the element's opening tag. Notice that the attributes are also consumed at this stage. The element's attributes 
+are temporarily retained up until another call to <i>readStartElement</i> or the eventual call to readEndElement. The 
+<i>readEndElement</i> call will consume columns 26 through 35 - but only if you've made a call to readPCData to consume 
+the text at columns 22 through 25.</p>
+
+<p>To deal with nested content, write something like this:</p>
+
+<pre class="code">if ( reader.readStartElement("parent") )
+{
+    reader.readPCData(text);
+    while ( readStartElement("child") )
+    {
+	// do something with child attributes or possibly nested PCData.
+	reader.readEndElement();
+    }
+    reader.readEndElement(false);
+}</pre>
+
+<p>With the above example, I hope you can see how easy it is to express XML parsing in a top-down manner.</p>
+
+<p>Note: Microsoft's MSXML parser requires testing for self-closing tags. In this library, the same mechanism accepts 
+both open/closing tags and self-closing tags.</p>
+
+<p>Suppose you have an XML fragment like so:</p>
+
+<pre class="xml">&lt;Contact
+    first="Michael"
+    last="Jordan"
+    city="Chicago"
+    state="Illinois"
+    postal="60612"
+/&gt;
+&lt;Contact
+    first="Barbara"
+    last="Jordan"
+    city="Houston"
+    state="Texas"
+    postal="77002"
+/&gt;
+&lt;Contact
+    first="Michael"
+    last="Dunn"
+    city="Toronto"
+    state="Ontario"
+    postal="M4R1K1"
+/&gt;</pre>
+
+<p>Your objective is to parse the above into a C++ class like so:</p>
+
+<pre class="code">class Contact
+{
+    std::string first, last, city, state, postal;
+};</pre>
+
+<p>Here's one way to parse a consecutive run of "contact" elements.</p>
+
+<pre class="code">std::list&lt;Contact *&gt; list;
+
+while ( reader.readStartElement("Contact") )
+{
+    Contact *p = new Contact();
+    reader.getAttribute("first", p->first);
+    reader.getAttribute("last", p->last);
+    reader.getAttribute("city", p->city);
+    reader.getAttribute("state", p->state);
+    reader.getAttribute("postal", p->postal);
+
+    // add to list of parsed contacts.
+    list.push_back(p);
+}</pre>
+
+<p>The getAttribute function returns true if the attribute was found. Suppose you want to enforce the presence of the 
+first and last name attributes. You could do this as ...</p>
+
+<pre class="code">std::list&lt;Contact *&gt; list;
+
+while ( reader.readStartElement("Contact") )
+{
+    Contact copy;
+    // got both first and last names?
+    if ( reader.getAttribute("first", copy.first) && 
+    	reader.getAttribute("last", copy.last) )
+    {
+        // yes: parse the rest.
+        reader.getAttribute("city", copy.city);
+        reader.getAttribute("state", copy.state);
+        reader.getAttribute("postal", copy.postal);
+
+        // add to list of parsed contacts.
+        list.push_back( new Contact(copy) );
+    }
+    else
+    {
+        // emit log trace or throw exception here.
+    }
+}</pre>
+
+<p>It is very common to see elements used like attributes. They have no attributes and only PCData text content. 
+Suppose you have an XML fragment like so:</p>
+
+<pre class="xml">&lt;Contact&gt;
+    &lt;first&gt;Michael&lt;/first&gt;
+    &lt;last&gt;Jordan&lt;/last&gt;
+    &lt;city&gt;Chicago&lt;/city&gt;
+    &lt;state&gt;Illinois&lt;/state&gt;
+    &lt;postal&gt;60612&lt;/postal&gt;
+&lt;/Contact&gt;
+&lt;Contact&gt;
+    &lt;first&gt;Barbara&lt;/first&gt;
+    &lt;last&gt;Jordan&lt;/last&gt;
+    &lt;city&gt;Houston&lt;/city&gt;
+    &lt;state&gt;Texas&lt;/state&gt;
+    &lt;postal&gt;77002&lt;/postal&gt;
+&lt;/Contact&gt;
+&lt;Contact&gt;
+    &lt;first&gt;Michael&lt;/first&gt;
+    &lt;last&gt;Dune&lt;/last&gt;
+    &lt;city&gt;Toronto&lt;/city&gt;
+    &lt;state&gt;Ontario&lt;/state&gt;
+    &lt;postal&gt;M4R1K1&lt;/postal&gt;
+&lt;/Contact&gt;</pre>
+
+<p>The readStringElement is tailor-made for parsing this type of data. With readStringElement, 
+the above example becomes ...</p>
+
+<pre class="code">std::list&lt;Contact *&gt; list;
+
+while ( reader.readStartElement("Contact") )
+{
+    Contact copy;
+
+    // got both first and last names?
+    if ( reader.readStringElement("first", copy.first)
+    	reader.readStringElement("last", copy.last) )
+    {
+        // yes: parse the rest.
+    	reader.readStringElement("city", copy.city) );
+    	reader.readStringElement("state", copy.state) );
+    	reader.readStringElement("postal", copy.postal) );
+        // add to list of parsed contacts.
+        list.push_back( new Contact(copy) );
+    }
+    else
+    {
+        // emit log trace or throw exception here.
+    }
+}</pre>
+
+<p>What if you don't know the names of the elements and attributes? No worry. You can use the anonymous version of 
+readStartElement to consume an element without knowing its name. The getElement method will retrieve the element's 
+name. For unkown attributes, an enumAttributes function allows you to iterate over the list of attributes for the 
+current element. You could, for example, write your own XML pretty-printer using these two functions.</p>
+
+<p>The attribute values shown so far have been strings. What about other types like <i>bool</i> or <i>int</i>? You 
+have the full power of the C standard libary at your disposal. I make heavy use of <i>strtol</i> or the TCHAR aware
+version <i>tcstol</i>. Consider strtoul for unsigned 32 bit long integers. For smaller integer types like short and 
+char, a simple typecast does the job. I usually use "0" and "1" for true/false values.</p>
+
+<pre class="code">tstring strValue;
+long width = 0;
+short value = 0;
+char rank = 0;
+bool locked = false;
+
+if ( reader.getAttribute("width", strValue) )
+    width = tcstol(strValue.c_str(), NULL, 10);
+if ( reader.getAttribute("value", strValue) )
+    value = (short)tcstol(strValue.c_str(), NULL, 10);
+if ( reader.getAttribute("rank", strValue) )
+    rank = (char)tcstol(strValue.c_str(), NULL, 10);
+if ( reader.getAttribute("locked", strValue) )
+    locked = tcstol(strValue.c_str(), NULL, 10) != 0;
+</pre>
+
+<h3>Schema Change Tolerance</h3>
+
+<p>Attributes discovered by the parser but not retrieved by <i>getAttributes</i> are quietly ignored. This 
+means older code won't crash when presented with a new attribute.</p>
+
+<p>You have some control over tolerating future addition of child nodes not anticipated in your current schema or design. 
+The <i>readEndElement</i> function accepts a boolean flag. Set this flag to true to silently ignore any nested content 
+(eg. text or child elements). The <i>getSkipped</i> function alerts you to any discarded content.</p>
+
+<p>At some point schema changes force you to lose backwards compatibility. Be sure to include a version attribute in 
+your document level element to cope with this.</p>
+
+<h3>Namespaces</h3>
+
+<p>As stated above, this library does not support namespaces. But this does not prevent you from parsing XML with 
+namespace prefixes. A trick I use is to parse the elements anonymously and ignore the namespace prefix. A more robust 
+technique is to parse the namespace declaration, merge the prefix with your expected element names before calls to 
+<i>readStartElement</i>. Again, I've scraped by without the need to properly deal with namespaces. I try not to 
+implement something until there is an actual need.</p>
+
+<h3>Entities</h3>
+
+<p>Only five standard XML entities are recognized. Those five are:</p>
+
+<ul>
+<li>&amp;amp;</li>
+<li>&amp;apos;</li>
+<li>&amp;gt;</li>
+<li>&amp;lt;</li>
+<li>&amp;quot;</li>
+</ul>
+
+<p>All others are passed through to your application.</p>
+
+<h3>Unicode</h3>
+
+<p>The parser only parses XML containing UTF-8 and ASCII text. It does not check for byte markers. The client API 
+accepts TCHAR (#define'd as char or wchar_t) data when retrieving attribute values or PCData. Element names and 
+attribute names are alway specified as UTF-8 character strings (eg. std::string and not std::wstring). The typdef 
+<i>tstring</i> is defined as either <i>std::string</i> or <i>std::wstring</i> depending upon your applications Unicode 
+settings. If your code must support both multibyte (MBCS or UTF-8) and Unicode (UTF-16) builds, I suggest using 
+<i>tstring</i>. In the case of a Unicode build, the library will transcode UTF-8 to UTF-16 before passing the data 
+to your application.</p>
+
+<h3>Linking to Your App</h3>
+
+<p>Separating functionality into separate DLLs is common. For the EXE and DLLs to work together, they must all be
+built with compatible compiler options and link against compatible versions of the C run-time library. Add one third 
+party DLL and this quickly devolves to DLL hell. I've long since adopted the practice of static libraries and a single 
+EXE. The optimizing linker is smart enough to omit unused library functions.</p>
+
+<p>This library statically links to your application. Make sure your compile options are compatible. Check character 
+encoding, run time library (multithreaded vs. single-threaded and DLL vs. static CRT). Relative to DLL hell, this is 
+the lesser of two evils. The Reader class resides under the XML namespace. If this collides with other symbols or
+namespaces you may want to tweak the source files.</p>
+
+<h3>Concludes</h3>
+
+<p>If you have modest XML needs and like the idea of a forward only XML parser, give this little library a try! In a 
+future installment, I'll show the XML writer companion class and later combine them into a Windows native SOAP client.</p>
+
+<h3>Future</h3>
+
+<p>Supporting DTDs, CDATA, and namespaces might be nice someday. I should add some getAttribute overrides for int, 
+char, bool, long, and short and their unsigned counterparts. The XML::Reader class was recently split into separate 
+classes for the read-ahead buffer with low level parsing primitives and high level XML API. The read-aheader parser 
+can be leveraged for other things like JSON and CSV.</p>
+
+<h3>Terms</h3>
+
+<ul>
+<li>attribute: a key / value pair appearing inside an XML element; written as key="value"; 
+following the element name and preceding the closing bracket '&gt;'.</li>
+<li>element: an XML object used to described structured content. An element may appear with or 
+without attributes. It may appear as a self-closing tag or as a pair of opening and closing tags. 
+Nested content may appear between the opening and closing tags.</li>
+<li>opening tag: a tag marking the start of an XML element and it's nested content, if any. 
+The opening tag is written as &lt;element [ attribute="value" ]* &gt;. The text "element" is 
+replaced with the actual element name. Nested content may follow.</li>
+<li>closing tag: a tag marking the end of an XML element and it's nested content. The closing tag is written as 
+&lt;/element&gt; where the text "element" is replaced with the actual element name.</li>
+<li>self-closing: a tag marking an XML element with no nested content. A self-closing tag may 
+have attributes. Syntax of a self-closing tag is &lt;element [ key="value" ]* /&gt;. Notice the 
+trailing '/'. The text "element" is replaced with the actual element name.</li>
+<li>PCData: parsed character data; free text that appears between opening and closing element tags. 
+May contain XML entity references.</li>
+<li>entity: an XML macro mechanism used for text substitution. 
+Some examples are: &amp;amp; &amp;lt; &amp;gt; &amp;quot;</li>
+</ul>
+
+<h3>About</h3>
+
+<p>Rick is a long-time programmer. His one claim to fame is being known by first name at nearly every coffeehouse in town. 
+
+<!-- Past haunts include Notsuoh, Katz's, Helios (formerly the Mausoleum), Agora, Cafe Avino, Byzantio, 
+Brasil and Halcyon (before they each started serving alcohol), Mojo's, Spiderhouse and Diedrich's. -->
+
+<!-- He occassionally watches the sun rise over the Gulf of Mexico from the IHOP on Seawall Boulevard in Galveston Island. -->
+
+He enjoys speaking in speed-talk settings on technical topics. A faded bumper sticker on his car reads: 
+"I &lt;br/&gt; for XHTML."</p>
+
+<h3>References</h3>
+
+<ul>
+<li>Microsoft's <a href="http://msdn.microsoft.com/en-us/library/system.xml.xmlreader.aspx">XML Reader</a> for .NET.</li>
+<li><a href="http://www.ibm.com/developerworks/xml/library/x-ctlbx/index.html">Fill your XML Toolbox</a>.</li>
+<li>Visit the <a href="http://www.w3.org/XML/">W3C XML</a> page, the host with the most in XML specifications.</li>
+<li>The home of <a href="http://sax.sourceforge.net/">SAX</a>.</li>
+</ul>
+
+<p class="author">&copy; Copyright 2011 Rick Parrish</p>
+
+</body>
+</html>
