@@ -25,7 +25,6 @@ static void append(std::string &strValue, char ch)
 // unrecognized entities are preserved.
 static void readEntities(const std::string &strValue, std::string &strResult)
 {
-	mbstate_t state = {0};
 	bool bEntity = false;
 	std::string strEntity;
 
@@ -157,7 +156,6 @@ bool Reader::isStartElement()
 // returns true if start of the named element.
 bool Reader::isStartElement(const char *strElement)
 {
-	size_t iLen = 0;
 	return isStartElement() && _parser.peekMatch(strElement);
 }
 
@@ -222,7 +220,7 @@ bool Reader::readEndElement(bool bSkip)
 		skipspace(!bChildren);
 		if (bChildren)
 		{
-			bool bSkip = false;
+			//bool bSkip = false;
 			std::string strTail;
 			strTail.reserve(_stack.back().Element.size() + 3);
 			strTail = "</";
