@@ -9,8 +9,10 @@ static void append(std::string &strValue, TCHAR ch, mbstate_t &state)
 {
 #ifdef UNICODE
 	char dest[4] = {0};
-	if ( wcrtomb(dest, ch, &state) > 0)
-		strValue += dest;
+	size_t used = 0;
+	errno_t err = wcrtomb_s(&used, dest, sizeof dest, ch, &state);
+	if (err == 0)
+		strValue.append(dest, used);
 #else
 	state;
 	strValue += (char)ch;
